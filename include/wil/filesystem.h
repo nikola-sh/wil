@@ -140,10 +140,11 @@ inline bool try_get_parent_path_range(_In_ PCWSTR path, _Out_ size_t* parentPath
 //! `CreateDirectoryW`.
 inline HRESULT CreateDirectoryDeepNoThrow(PCWSTR path) WI_NOEXCEPT
 {
+    DWORD createDirError = ERROR_SUCCESS;
     if (::CreateDirectoryW(path, nullptr) == FALSE)
     {
-        DWORD lastError = ::GetLastError();
-        if (lastError == ERROR_PATH_NOT_FOUND)
+        createDirError = ::GetLastError();
+        if (createDirError == ERROR_PATH_NOT_FOUND)
         {
             size_t parentLength{};
             if (try_get_parent_path_range(path, &parentLength))
@@ -153,21 +154,34 @@ inline HRESULT CreateDirectoryDeepNoThrow(PCWSTR path) WI_NOEXCEPT
                 RETURN_IF_FAILED(StringCchCopyNW(parent.get(), parentLength + 1, path, parentLength));
                 RETURN_IF_FAILED(CreateDirectoryDeepNoThrow(parent.get())); // recurs
             }
-            if (::CreateDirectoryW(path, nullptr) == FALSE)
+            if (::CreateDirectoryW(path, nullptr))
             {
-                lastError = ::GetLastError();
-                if (lastError != ERROR_ALREADY_EXISTS)
-                {
-                    RETURN_WIN32(lastError);
-                }
+                createDirError = ERROR_SUCCESS;
+            }
+            else
+            {
+                createDirError = ::GetLastError();
             }
         }
-        else if (lastError != ERROR_ALREADY_EXISTS)
-        {
-            RETURN_WIN32(lastError);
-        }
     }
-    return S_OK;
+
+    if (createDirError == ERROR_SUCCESS)
+    {
+        return S_OK;
+    }
+
+    if (createDirError == ERROR_ALREADY_EXISTS)
+    {
+        DWORD attributes = ::GetFileAttributesW(path);
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+        {
+            RETURN_WIN32(createDirError);
+        }
+
+        return S_OK;
+    }
+
+    RETURN_WIN32(createDirError);
 }
 
 #ifdef WIL_ENABLE_EXCEPTIONS
